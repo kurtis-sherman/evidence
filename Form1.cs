@@ -1,8 +1,12 @@
 ﻿using System;
 using System.Configuration;
+using System.Diagnostics;
 using System.Drawing;
+using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+
 
 namespace evidence
 {
@@ -16,6 +20,9 @@ namespace evidence
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private WordUtilities wordUtils;
+
 
         protected override void WndProc(ref Message m)
         {
@@ -47,8 +54,6 @@ namespace evidence
             if (!this.Visible)
                 this.Show();
         }
-
-        private WordUtilities wordUtils = new WordUtilities();
 
         public Form1()
         {
@@ -106,14 +111,19 @@ namespace evidence
             this.TopMost = true;
 
             // Create Word document
-            string docFilename = wordUtils.CreateWordDocument();
-            if (docFilename != null)
+            wordUtils = new WordUtilities();
+            
+            LoadPowerShellScripts();
+        }
+
+        private void LoadPowerShellScripts()
+        {
+            string exeDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            string[] scriptFiles = Directory.GetFiles(Path.Combine(exeDirectory, "scripts"), "*.ps1");
+
+            foreach (string scriptFile in scriptFiles)
             {
-                //MessageBox.Show($"Word document created: {docFilename}");
-            }
-            else
-            {
-                MessageBox.Show("Error creating Word document.");
+                comboScripts.Items.Add(Path.GetFileName(scriptFile));
             }
         }
 
@@ -123,9 +133,67 @@ namespace evidence
             base.OnFormClosed(e);
         }
 
-        private void radioButton1_CheckedChanged(object sender, EventArgs e)
-        {
 
+        private void comboScripts_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            // Hide the form
+            this.Hide();
+
+            string selectedScriptName = comboScripts.SelectedItem as string;
+            if (selectedScriptName != null)
+            {
+                string scriptPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "scripts", selectedScriptName);
+
+                // Execute PowerShell script and get its output
+                string scriptOutput = ExecutePowerShellScript(scriptPath);
+
+                // Add script output to Word document using WordUtilities
+                wordUtils.AddTextToWordDocument(scriptOutput);
+            }
+
+            if (!this.Visible)
+                this.Show();
+        }
+
+        private string ExecutePowerShellScript(string scriptPath)
+        {
+            // PowerShell command or script to execute
+            string command = $"-ExecutionPolicy Bypass -File \"{scriptPath}\"";
+
+            // Create a new ProcessStartInfo
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = command,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            // Create and start the process
+            using (Process process = new Process { StartInfo = psi })
+            {
+                process.Start();
+                process.WaitForExit();
+
+                // Read the output and errors (if needed)
+                string output = process.StandardOutput.ReadToEnd();
+                string errors = process.StandardError.ReadToEnd();
+
+                if (!string.IsNullOrEmpty(errors))
+                {
+                    Console.WriteLine($"Error occurred while executing PowerShell script: {errors}");
+                    // Handle error case if needed
+                }
+
+                return output;
+            }
+        }
+
+        private void Form1_FormClosed(object sender, FormClosedEventArgs e)
+        {
+            wordUtils.SaveAndCloseWordDocument();
         }
     }
 }

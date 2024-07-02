@@ -1,16 +1,21 @@
 ﻿using System;
 using System.Configuration;
-using System.Drawing.Imaging;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Text.RegularExpressions;
-using Word = Microsoft.Office.Interop.Word;
 using System.Windows.Forms;
+using Word = Microsoft.Office.Interop.Word;
 
 namespace evidence
 {
     public class WordUtilities
     {
+        private Word.Application wordApp;
+        private Word.Document wordDoc;
+        private string docFolderPath;
+        private static string docFilename;
+
         public enum AnnotationType
         {
             None,
@@ -18,9 +23,6 @@ namespace evidence
             Pass,
             Fail
         }
-
-        private string docFolderPath;
-        static string docFilename;
 
         public WordUtilities()
         {
@@ -36,10 +38,7 @@ namespace evidence
 
             // Ensure docFolderPath exists, create if it doesn't
             EnsureFolderExists(docFolderPath);
-        }
 
-        public string CreateWordDocument()
-        {
             // Generate timestamp for the Word document
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
@@ -50,11 +49,17 @@ namespace evidence
             docFilename = Path.Combine(docFolderPath, $"{sanitizedName}.docx");
 
             // Initialize Word application and document
-            Word.Application wordApp = new Word.Application();
-            Word.Document wordDoc = wordApp.Documents.Add();
+            InitializeWord();
+        }
 
-            try
+        private void InitializeWord()
+        {
+            // Check if Word application and document need initialization
+            if (wordApp == null || wordDoc == null)
             {
+                wordApp = new Word.Application();
+                wordDoc = wordApp.Documents.Add();
+
                 // Set page layout to landscape
                 wordDoc.PageSetup.Orientation = Word.WdOrientation.wdOrientLandscape;
 
@@ -65,36 +70,272 @@ namespace evidence
                 wordDoc.PageSetup.RightMargin = marginPoints;
                 wordDoc.PageSetup.TopMargin = marginPoints;
                 wordDoc.PageSetup.BottomMargin = marginPoints;
-
-                // Save the document without displaying any dialogs
-                wordDoc.SaveAs2(docFilename, Word.WdSaveFormat.wdFormatDocumentDefault,
-                                AddToRecentFiles: false, Password: "", WritePassword: "",
-                                ReadOnlyRecommended: false, EmbedTrueTypeFonts: false,
-                                SaveNativePictureFormat: false, SaveFormsData: false,
-                                SaveAsAOCELetter: false, Encoding: Type.Missing,
-                                InsertLineBreaks: Type.Missing, AllowSubstitutions: false,
-                                LineEnding: Type.Missing, AddBiDiMarks: false,
-                                CompatibilityMode: Word.WdCompatibilityMode.wdCurrent
-                                );
-                return docFilename;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error creating Word document: {ex.Message}");
-                return null; // Handle error gracefully in your application
-            }
-            finally
-            {
-                // Close and quit Word application
-                wordDoc.Close();
-                wordApp.Quit();
-
-                // Release COM objects to avoid memory leaks
-                ReleaseObject(wordDoc);
-                ReleaseObject(wordApp);
             }
         }
 
+        public void AppendScreenshotToWord(AnnotationType type, string annotationText)
+        {
+            try
+            {
+                // Capture screenshot and annotate
+                Bitmap screenshot = CaptureScreen();
+                if (screenshot != null)
+                {
+                    // Determine the screen where the cursor was when the screenshot was taken
+                    Screen cursorScreen = Screen.FromPoint(Cursor.Position);
+
+                    // Adjust cursor position relative to the top-left corner of the monitor
+                    int cursorXRelativeToMonitor = Cursor.Position.X - cursorScreen.Bounds.X;
+                    int cursorYRelativeToMonitor = Cursor.Position.Y - cursorScreen.Bounds.Y;
+
+                    // Get cursor position relative to the monitor where the mouse was when the screenshot was taken
+                    Point cursorPositionRelativeToMonitor = new Point(cursorXRelativeToMonitor, cursorYRelativeToMonitor);
+
+                    // Annotate the screenshot based on annotationText and annotation type
+                    Bitmap annotated = AnnotateScreenshot(screenshot, annotationText, cursorPositionRelativeToMonitor, type);
+
+                    // Save annotated image to a temporary file
+                    string tempImagePath = Path.GetTempFileName();
+                    annotated.Save(tempImagePath, ImageFormat.Png);
+
+                    // Insert annotationText into Word document
+                    AddTextToWordDocument(annotationText);
+
+                    // Insert horizontal line
+                    AddHorizontalLineToWordDocument();
+
+                    // Insert image into Word document
+                    AddImageToWordDocument(tempImagePath);
+
+                    // Clean up temporary image file
+                    File.Delete(tempImagePath);
+                }
+                else
+                {
+                    Console.WriteLine("Error: Unable to capture screenshot.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error appending screenshot to Word document: {ex.Message}");
+                // Handle the exception as needed in your application
+            }
+        }
+
+        public void AddTextToWordDocument(string text)
+        {
+            try
+            {
+                // Check if Word application and document are initialized
+                if (wordDoc != null && wordApp != null)
+                {
+                    // Move to the end of the document
+                    Word.Range endRange = wordDoc.Content;
+                    endRange.Collapse(Word.WdCollapseDirection.wdCollapseEnd);
+
+                    // Insert text into the document
+                    Word.Paragraph para = wordDoc.Content.Paragraphs.Add();
+                    para.Range.Text = text;
+                    para.Range.InsertParagraphAfter();
+
+                    // Optionally, you can format the text
+                    para.Range.Font.Name = "Arial";
+                    para.Range.Font.Size = 12;
+                }
+                else
+                {
+                    throw new InvalidOperationException("Word application or document is not initialized.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error adding text to Word document: {ex.Message}");
+                // Handle the exception as needed in your application
+            }
+        }
+
+        private void AddHorizontalLineToWordDocument()
+        {
+            try
+            {
+                // Check if Word application and document are initialized
+                if (wordDoc != null && wordApp != null)
+                {
+                    // Move to the end of the document
+                    Word.Range endRange = wordDoc.Content;
+                    endRange.Collapse(Word.WdCollapseDirection.wdCollapseEnd);
+
+                    // Insert horizontal line
+                    Word.Paragraph horizLine = wordDoc.Content.Paragraphs.Add();
+                    horizLine.Range.InlineShapes.AddHorizontalLineStandard();
+                    horizLine.Range.InsertParagraphAfter();
+                }
+                else
+                {
+                    throw new InvalidOperationException("Word application or document is not initialized.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error adding horizontal line to Word document: {ex.Message}");
+                // Handle the exception as needed in your application
+            }
+        }
+
+        private void AddImageToWordDocument(string imagePath)
+        {
+            try
+            {
+                // Check if Word application and document are initialized
+                if (wordDoc != null && wordApp != null)
+                {
+                    // Move to the end of the document
+                    Word.Range endRange = wordDoc.Content;
+                    endRange.Collapse(Word.WdCollapseDirection.wdCollapseEnd);
+                    endRange.InsertParagraphAfter();
+
+                    // Insert image into Word document
+                    Word.InlineShape inlineShape = endRange.InlineShapes.AddPicture(imagePath, System.Reflection.Missing.Value, true, System.Reflection.Missing.Value);
+                    //endRange.InlineShapes.AddPicture(imagePath, System.Reflection.Missing.Value, true, System.Reflection.Missing.Value);
+
+                    // Calculate maximum width that fits within page margins
+                    float maxWidth = wordDoc.PageSetup.PageWidth - wordDoc.PageSetup.LeftMargin - wordDoc.PageSetup.RightMargin;
+
+                    // Resize image if necessary
+                    if (inlineShape.Width > maxWidth)
+                    {
+                        float scaleRatio = maxWidth / inlineShape.Width;
+                        inlineShape.Width *= scaleRatio;
+                        inlineShape.Height *= scaleRatio;
+                    }
+                }
+                else
+                {
+                    throw new InvalidOperationException("Word application or document is not initialized.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error adding image to Word document: {ex.Message}");
+                // Handle the exception as needed in your application
+            }
+        }
+
+        private Bitmap CaptureScreen()
+        {
+            foreach (Screen screen in Screen.AllScreens)
+            {
+                if (screen.Bounds.Contains(Cursor.Position))
+                {
+                    Bitmap screenshot = new Bitmap(screen.Bounds.Width, screen.Bounds.Height, PixelFormat.Format32bppArgb);
+                    using (Graphics g = Graphics.FromImage(screenshot))
+                    {
+                        g.CopyFromScreen(screen.Bounds.X, screen.Bounds.Y, 0, 0, screen.Bounds.Size, CopyPixelOperation.SourceCopy);
+                    }
+                    return screenshot;
+                }
+            }
+            return null;
+        }
+
+        private Bitmap AnnotateScreenshot(Bitmap screenshot, string annotationText, Point annotationPosition, AnnotationType type)
+        {
+            Bitmap annotated = new Bitmap(screenshot);
+
+            using (Graphics g = Graphics.FromImage(annotated))
+            {
+                // Read circle radius from app.config with default value
+                int circleRadius = int.TryParse(ConfigurationManager.AppSettings["CircleRadius"], out int radius) ? radius : 20;
+                int circleDiameter = circleRadius * 2;
+
+                // Calculate circle position centered at annotationPosition
+                int circleX = annotationPosition.X - circleRadius;
+                int circleY = annotationPosition.Y - circleRadius;
+
+                // Create circle bounds
+                Rectangle circleBounds = new Rectangle(circleX, circleY, circleDiameter, circleDiameter);
+
+                // Calculate center of the circle
+                int centerX = annotationPosition.X;
+                int centerY = annotationPosition.Y;
+
+                // Add a red pixel at the center of the circle
+                if (centerX >= 0 && centerX < annotated.Width && centerY >= 0 && centerY < annotated.Height)
+                {
+                    annotated.SetPixel(centerX, centerY, Color.Red);
+                }
+
+                // Select font and symbol based on AnnotationType (configurable via app.config)
+                Font font;
+                char symbol;
+                Brush brush = Brushes.White; // Default brush
+
+                switch (type)
+                {
+                    case AnnotationType.Info:
+                        font = new Font(ConfigurationManager.AppSettings["InfoFontName"] ?? "Webdings", 20);
+                        string infoSymbolConfig = ConfigurationManager.AppSettings["InfoSymbol"];
+                        symbol = !string.IsNullOrEmpty(infoSymbolConfig) ? infoSymbolConfig[0] : 'i'; // Default symbol 'i'
+                        brush = new SolidBrush(ColorTranslator.FromHtml(ConfigurationManager.AppSettings["InfoColor"] ?? "#FFFFFF")); // Default: White
+                        break;
+                    case AnnotationType.Pass:
+                        font = new Font(ConfigurationManager.AppSettings["PassFontName"] ?? "Wingdings 2", 20);
+                        string passSymbolConfig = ConfigurationManager.AppSettings["PassSymbol"];
+                        symbol = !string.IsNullOrEmpty(passSymbolConfig) ? passSymbolConfig[0] : 'R'; // Default symbol 'R'
+                        brush = new SolidBrush(ColorTranslator.FromHtml(ConfigurationManager.AppSettings["PassColor"] ?? "#00FF00")); // Default: Green
+                        break;
+                    case AnnotationType.Fail:
+                        font = new Font(ConfigurationManager.AppSettings["FailFontName"] ?? "Wingdings 2", 20);
+                        string failSymbolConfig = ConfigurationManager.AppSettings["FailSymbol"];
+                        symbol = !string.IsNullOrEmpty(failSymbolConfig) ? failSymbolConfig[0] : 'Q'; // Default symbol 'Q'
+                        brush = new SolidBrush(ColorTranslator.FromHtml(ConfigurationManager.AppSettings["FailColor"] ?? "#FF0000")); // Default: Red
+                        break;
+                    default:
+                        font = SystemFonts.DefaultFont;
+                        symbol = ' ';
+                        break;
+                }
+
+                // Read transparency level from app.config with default value
+                int transparencyLevel = int.TryParse(ConfigurationManager.AppSettings["CircleTransparency"], out int transparency) ? transparency : 128;
+
+                // Fill circle with transparent color
+                Color transparentColor = Color.FromArgb(transparencyLevel, ((SolidBrush)brush).Color);
+                g.FillEllipse(new SolidBrush(transparentColor), circleBounds);
+
+                // Read symbol offsets from app.config with default values
+                int symbolXOffset = int.TryParse(ConfigurationManager.AppSettings["SymbolXOffset"], out int xOffset) ? xOffset : 0;
+                int symbolYOffset = int.TryParse(ConfigurationManager.AppSettings["SymbolYOffset"], out int yOffset) ? yOffset : 0;
+
+                // Adjust symbol offsets if they push the symbol outside the annotated area
+                int symbolX = annotationPosition.X + symbolXOffset; // Center horizontally
+                int symbolY = annotationPosition.Y + symbolYOffset; // Center vertically
+
+                // Ensure symbol is within bounds of the annotated area
+                if (symbolX < 0)
+                {
+                    symbolX = 0;
+                }
+                else if (symbolX > annotated.Width - font.Height) // Adjust based on symbol size (assuming square font)
+                {
+                    symbolX = annotated.Width - font.Height;
+                }
+
+                if (symbolY < 0)
+                {
+                    symbolY = 0;
+                }
+                else if (symbolY > annotated.Height - font.Height) // Adjust based on symbol size (assuming square font)
+                {
+                    symbolY = annotated.Height - font.Height;
+                }
+
+                Point symbolPosition = new Point(symbolX, symbolY);
+                g.DrawString(symbol.ToString(), font, brush, symbolPosition);
+            }
+
+            return annotated;
+        }
 
         private string SanitizeFilename(string filename)
         {
@@ -120,199 +361,53 @@ namespace evidence
             }
         }
 
-        public Bitmap CaptureScreen()
+        public void SaveAndCloseWordDocument()
         {
-            foreach (Screen screen in Screen.AllScreens)
+            if (wordDoc != null && wordApp != null)
             {
-                if (screen.Bounds.Contains(Cursor.Position))
+                try
                 {
-                    Bitmap screenshot = new Bitmap(screen.Bounds.Width, screen.Bounds.Height, PixelFormat.Format32bppArgb);
-                    using (Graphics g = Graphics.FromImage(screenshot))
-                    {
-                        g.CopyFromScreen(screen.Bounds.X, screen.Bounds.Y, 0, 0, screen.Bounds.Size, CopyPixelOperation.SourceCopy);
-                    }
-                    return screenshot;
+                    // Save the document without displaying any dialogs
+                    wordDoc.SaveAs2(docFilename, Word.WdSaveFormat.wdFormatDocumentDefault,
+                                    AddToRecentFiles: false, Password: "", WritePassword: "",
+                                    ReadOnlyRecommended: false, EmbedTrueTypeFonts: false,
+                                    SaveNativePictureFormat: false, SaveFormsData: false,
+                                    SaveAsAOCELetter: false, Encoding: Type.Missing,
+                                    InsertLineBreaks: Type.Missing, AllowSubstitutions: false,
+                                    LineEnding: Type.Missing, AddBiDiMarks: false,
+                                    CompatibilityMode: Word.WdCompatibilityMode.wdCurrent);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error saving Word document: {ex.Message}");
+                }
+                finally
+                {
+                    // Close and quit Word application
+                    CloseWordDocument();
                 }
             }
-            return null;
         }
 
-        private Bitmap AnnotateScreenshot(Bitmap screenshot, string annotationText, Point annotationPosition, AnnotationType type)
+        private void CloseWordDocument()
         {
-            Bitmap annotated = new Bitmap(screenshot);
-
-            using (Graphics g = Graphics.FromImage(annotated))
+            try
             {
-                int rectSize = 40;
-                int rectOffset = rectSize / 2;
-                Screen scnInContext = Screen.FromPoint(annotationPosition);
-
-                int scnX = annotationPosition.X - scnInContext.Bounds.X;
-                int scnY = annotationPosition.Y - scnInContext.Bounds.Y;
-
-                int rectX = Math.Max(0, scnX - rectOffset);
-                int rectY = Math.Max(0, scnY - rectOffset);
-
-                Rectangle rect = new Rectangle(rectX, rectY, rectSize, rectSize);
-                Color colTransp = Color.FromArgb(128, 0, 0, 255);
-
-                if (rect.X >= 0 && rect.Y >= 0 && rect.X + rect.Width <= annotated.Width && rect.Y + rect.Height <= annotated.Height)
-                {
-                    g.FillRectangle(new SolidBrush(colTransp), rect);
-                }
-                else
-                {
-                    throw new Exception("Rectangle out of bounds");
-                }
-
-                //Font wingdingsFont = new Font("Wingdings", 20); // Adjust font size as needed
-                //char checkboxSymbol = (char)0xFC;  // Unicode character code for checkbox in Wingdings font
-
-                //Font wingdingsFont = new Font("Wingdings", 20); // Adjust font size as needed
-                //char checkboxSymbol = (char)0xFC;  // Unicode character code for checkbox in Wingdings font
-
-                // Draw checkbox symbol at annotationPosition
-                //Point textPosition = new Point(annotationPosition.X + 20 , annotationPosition.Y);
-                //g.DrawString(checkboxSymbol.ToString(), wingdingsFont, Brushes.Green, annotationPosition);
-
-                Font fontD = SystemFonts.DefaultFont;
-                char symbol = ' ';
-                Brush brush = Brushes.White;
-                switch (type)
-                {
-                    case AnnotationType.Info:
-                        fontD = new Font("Webdings", 20);
-                        symbol = 'i';
-                        break;
-                    case AnnotationType.Pass:
-                        fontD = new Font("Wingdings 2", 20);
-                        symbol = 'R';
-                        brush = Brushes.Green;
-                        break;
-                    case AnnotationType.Fail:
-                        fontD = new Font("Wingdings 2", 20);
-                        symbol = 'Q';
-                        brush = Brushes.Red;
-                        break;
-                }
-
-                // Load values from app.config with defaults
-                int annoSymOffsetX = int.TryParse(ConfigurationManager.AppSettings["AnnotationSymbolOffsetX"], out int offsetX) ? offsetX : 20;
-                int annoSymOffsetY = int.TryParse(ConfigurationManager.AppSettings["AnnotationSymbolOffsetY"], out int offsetY) ? offsetY : 20;
-
-                // Draw text at annotationPosition with offsets
-                Point textPosition = new Point(annotationPosition.X + annoSymOffsetX, annotationPosition.Y + annoSymOffsetY);
-
-                // Use textPosition in your DrawString method
-                g.DrawString(symbol.ToString(), fontD, brush, textPosition);
-                //g.DrawString(annotationText, SystemFonts.DefaultFont, Brushes.Red, annotationPosition);
-
-
-                //g.DrawString(annotationText, SystemFonts.DefaultFont, Brushes.Red, annotationPosition);
+                // Close and quit Word application
+                wordDoc.Close(SaveChanges: true);
+                wordApp.Quit(SaveChanges: true);
             }
-
-            return annotated;
-        }
-
-        public void AppendScreenshotToWord(AnnotationType type, string annotationText)
-        {
-            // Initialize Word application
-            Word.Application wordApp = new Word.Application();
-            Word.Document wordDoc = wordApp.Documents.Open(docFilename);
-
-            // Capture screenshot and annotate if annotationText is not empty
-            Bitmap screenshot = CaptureScreen();
-            Bitmap annotated = AnnotateScreenshot(screenshot, annotationText, Cursor.Position, type);
-
-            // Save annotated image to a temporary file
-            string tempImagePath = Path.GetTempFileName();
-            annotated.Save(tempImagePath, ImageFormat.Png);
-
-            // Move to end of document
-            object missing = System.Reflection.Missing.Value;
-            Word.Range endRange = wordDoc.Content;
-            endRange.Collapse(Word.WdCollapseDirection.wdCollapseEnd);
-            endRange.InsertParagraphAfter();
-
-            // Insert annotationText as Arial font size 14
-            Word.Paragraph textPara = wordDoc.Content.Paragraphs.Add();
-            textPara.Range.Text = annotationText;
-            textPara.Range.Font.Name = "Arial";
-            textPara.Range.Font.Size = 14;
-            textPara.Range.InsertParagraphAfter();
-
-            // Insert horizontal line
-            Word.Paragraph horizLine = wordDoc.Content.Paragraphs.Add();
-            horizLine.Range.InlineShapes.AddHorizontalLineStandard();
-            horizLine.Range.InsertParagraphAfter();
-
-            // Insert image into Word document
-            Word.InlineShape inlineShape = horizLine.Range.InlineShapes.AddPicture(tempImagePath);
-
-            // Calculate maximum width that fits within page margins
-            float maxWidth = wordDoc.PageSetup.PageWidth - wordDoc.PageSetup.LeftMargin - wordDoc.PageSetup.RightMargin;
-
-            // Resize image if necessary
-            if (inlineShape.Width > maxWidth)
+            catch (Exception ex)
             {
-                float scaleRatio = maxWidth / inlineShape.Width;
-                inlineShape.Width *= scaleRatio;
-                inlineShape.Height *= scaleRatio;
+                Console.WriteLine($"Error closing Word document: {ex.Message}");
             }
-
-            // Clean up
-            File.Delete(tempImagePath);
-
-            // Save and close the Word document
-            wordDoc.Save();
-            wordDoc.Close();
-            wordApp.Quit();
+            finally
+            {
+                // Release COM objects to avoid memory leaks
+                ReleaseObject(wordDoc);
+                ReleaseObject(wordApp);
+            }
         }
-
-
-
-        //public void AppendScreenshotToWord(AnnotationType type, string annotationText)
-        //{
-        //    Bitmap screenshot = CaptureScreen(); // Capture screenshot
-        //    Point currentMousePosition = Cursor.Position; // Get current mouse position
-
-        //    // Initialize Word application
-        //    Word.Application wordApp = new Word.Application();
-        //    Word.Document wordDoc = wordApp.Documents.Open(docFilename);
-
-        //    // Annotate screenshot if annotationText is not empty
-        //    Bitmap annotated = AnnotateScreenshot(screenshot, annotationText, currentMousePosition, type);
-
-        //    // Save annotated image to a temporary file
-        //    string tempImagePath = Path.GetTempFileName();
-        //    annotated.Save(tempImagePath, ImageFormat.Png);
-
-        //    // Move to end of document
-        //    object missing = System.Reflection.Missing.Value;
-        //    wordApp.Selection.EndKey(Word.WdUnits.wdStory, missing);
-
-        //    // Insert image into Word document
-        //    Word.InlineShape inlineShape = wordDoc.InlineShapes.AddPicture(tempImagePath);
-        //    inlineShape.Width = screenshot.Width;
-        //    inlineShape.Height = screenshot.Height;
-        //    inlineShape.Range.Cut();
-
-        //    // Horizontal line
-        //    Word.Paragraph horizLine = wordDoc.Content.Paragraphs.Add();
-        //    horizLine.Range.InlineShapes.AddHorizontalLineStandard();
-
-        //    Word.Selection sel = wordApp.Selection;
-
-        //    sel.Paste();
-
-        //    // Clean up temporary file
-        //    File.Delete(tempImagePath);
-
-        //    // Save and close the Word document
-        //    wordDoc.Save();
-        //    wordDoc.Close();
-        //    wordApp.Quit();
-        //}
 
         private void ReleaseObject(object obj)
         {
