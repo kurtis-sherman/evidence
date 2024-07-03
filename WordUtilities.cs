@@ -154,7 +154,7 @@ namespace evidence
             }
         }
 
-        private void AddHorizontalLineToWordDocument()
+        public void AddHorizontalLineToWordDocument()
         {
             try
             {

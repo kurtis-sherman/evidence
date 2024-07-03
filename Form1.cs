@@ -107,7 +107,6 @@ namespace evidence
             }
 
             // Other initialization code
-            ///this.FormBorderStyle = FormBorderStyle.None;
             this.TopMost = true;
 
             // Create Word document
@@ -146,6 +145,12 @@ namespace evidence
 
                 // Execute PowerShell script and get its output
                 string scriptOutput = ExecutePowerShellScript(scriptPath);
+
+                // Add script output to Word document using WordUtilities
+                wordUtils.AddTextToWordDocument($"Script:{selectedScriptName}");
+
+                // Insert horizontal line
+                wordUtils.AddHorizontalLineToWordDocument();
 
                 // Add script output to Word document using WordUtilities
                 wordUtils.AddTextToWordDocument(scriptOutput);
